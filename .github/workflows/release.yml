@@ -65,6 +65,11 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "$build needs Java $java (class file $major)"
 
+      # Nothing is published without proving the patch still works in the jar
+      # that is about to be published.
+      - name: Check the handshake end to end
+        run: python3 phantom/e2e-handshake.py "${{ steps.jar.outputs.file }}"
+
       - name: Publish the jar
         env:
           GH_TOKEN: ${{ github.token }}

@@ -162,6 +162,12 @@ jobs:
         if: steps.plan.outputs.do != 'nothing'
         run: ./gradlew :velocity-proxy:checkstyleMain :velocity-proxy:shadowJar --no-daemon
 
+      # Boots the jar and logs into it. The diff compiling says nothing about
+      # whether the running proxy still rewrites the hostname.
+      - name: Check the handshake end to end
+        if: steps.plan.outputs.do != 'nothing'
+        run: python3 phantom/e2e-handshake.py proxy/build/libs/velocity-proxy-*-all.jar
+
       - name: Compare versions
         id: version
         if: steps.plan.outputs.do != 'nothing'
