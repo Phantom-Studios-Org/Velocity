@@ -141,10 +141,17 @@ public class VelocityServerConnection implements MinecraftConnectionAssociation,
     }
   }
 
+  // [phantom] the backend's own address, not the player's vhost. Our backends sit behind another
+  // hostname router, so this field is the routing key for the next hop and the player's vhost
+  // would point it back at this proxy. Same for legacy/bungeeguard, where the host ends up inside
+  // the string the backend validates.
+  private String handshakeHostname() {
+    return registeredServer.getServerInfo().getAddress().getHostString();
+  }
+
   private String createLegacyForwardingAddress() {
     return PlayerDataForwarding.createLegacyForwardingAddress(
-      proxyPlayer.getVirtualHost().orElseGet(() ->
-        registeredServer.getServerInfo().getAddress()).getHostString(),
+      handshakeHostname(),
       getPlayerRemoteAddressAsString(),
       proxyPlayer.getGameProfile()
     );
@@ -152,8 +159,7 @@ public class VelocityServerConnection implements MinecraftConnectionAssociation,
 
   private String createBungeeGuardForwardingAddress(byte[] forwardingSecret) {
     return PlayerDataForwarding.createBungeeGuardForwardingAddress(
-      proxyPlayer.getVirtualHost().orElseGet(() ->
-        registeredServer.getServerInfo().getAddress()).getHostString(),
+      handshakeHostname(),
       getPlayerRemoteAddressAsString(),
       proxyPlayer.getGameProfile(),
       forwardingSecret
@@ -166,9 +172,7 @@ public class VelocityServerConnection implements MinecraftConnectionAssociation,
 
     // Initiate the handshake.
     ProtocolVersion protocolVersion = proxyPlayer.getConnection().getProtocolVersion();
-    String playerVhost = proxyPlayer.getVirtualHost()
-                .orElseGet(() -> registeredServer.getServerInfo().getAddress())
-                .getHostString();
+    String playerVhost = handshakeHostname();
 
     HandshakePacket handshake = new HandshakePacket();
     handshake.setIntent(HandshakeIntent.LOGIN);
