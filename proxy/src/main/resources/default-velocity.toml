@@ -2,10 +2,10 @@
 config-version = "2.8"
 
 # What port should the proxy be bound to? By default, we'll bind to all addresses on port 25565.
-# [phantom] identifies this proxy to the node's router, so a backend can be told
-# to accept nothing else. Written by the panel, and only when every backend
-# behind this proxy is ours: it is a private protocol and does not belong on
-# somebody else's machine. Modern forwarding only. Empty disables it.
+# [phantom] tells the node's router which proxy is calling, so a backend can
+# refuse anything else. Written by the panel, and only when every backend here is
+# ours: it's a private protocol and has no business on someone else's box.
+# Modern forwarding only. Empty turns it off.
 phantom-token = ""
 
 bind = "0.0.0.0:25565"
