@@ -3,6 +3,23 @@
 [![Build Status](https://img.shields.io/github/actions/workflow/status/PaperMC/Velocity/gradle.yml)](https://papermc.io/downloads/velocity)
 [![Join our Discord](https://img.shields.io/discord/289587909051416579.svg?logo=discord&label=)](https://discord.gg/papermc)
 
+> [!NOTE]
+> **Phantom fork.** Sends the backend's own address in the handshake instead of
+> the virtual host the player connected with.
+>
+> Upstream forwards the player's vhost on purpose (PaperMC/Velocity#1076), which
+> works when the proxy is the edge and everything behind it is addressed by
+> ip:port. It doesn't when the backend sits behind another hostname-based router,
+> as it does on our hosting: there that field is the routing key for the next hop,
+> so the player's vhost either fails to resolve or loops the connection back to
+> the proxy it just left.
+>
+> Also applied to legacy and BungeeGuard forwarding, where the host is part of the
+> string the backend validates.
+>
+> Patch: [`phantom/handshake-hostname.patch`](phantom/handshake-hostname.patch).
+> Everything else is upstream.
+
 A Minecraft server proxy with unparalleled server support, scalability,
 and flexibility.
 

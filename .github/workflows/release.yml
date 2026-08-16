@@ -1,0 +1,114 @@
+name: release
+
+# Builds a jar per release line and republishes the index the panel reads.
+#
+# Runs when a sync PR lands, so releases only exist for reviewed code. The index
+# is one JSON asset on a fixed tag, which gives the API a stable URL.
+
+on:
+  push:
+    branches:
+      - 'dev/*.0.0'
+  workflow_dispatch:
+
+# Two lines can land at once; the index is a single shared asset, so the runs
+# have to queue instead of clobbering each other's rebuild.
+concurrency:
+  group: velocity-index
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+env:
+  INDEX_TAG: index
+  INDEX_FILE: velocity-versions.json
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: |
+            17
+            21
+            25
+
+      - name: Build
+        run: ./gradlew :velocity-proxy:shadowJar --no-daemon
+
+      - name: Describe what came out
+        id: jar
+        run: |
+          jar=$(ls proxy/build/libs/velocity-proxy-*-all.jar | head -1)
+          version=$(basename "$jar" | sed -E 's/^velocity-proxy-(.*)-all\.jar$/\1/')
+          build="$version+phantom.${{ github.run_number }}"
+
+          # Read the Java release off the jar instead of mapping it from the
+          # branch: a mapping would be wrong the first time a line moves JDK.
+          major=$(unzip -p "$jar" com/velocitypowered/proxy/Velocity.class \
+            | od -An -tu1 -j6 -N2 | awk '{print $1*256+$2}')
+          java=$((major - 44))
+
+          out="velocity-$build.jar"
+          cp "$jar" "$out"
+          jq -nc --arg b "$build" --argjson j "$java" --arg f "$out" \
+            '{build:$b, java:$j, file:$f}' > phantom-build.json
+          {
+            echo "build=$build"
+            echo "java=$java"
+            echo "file=$out"
+          } >> "$GITHUB_OUTPUT"
+          echo "$build needs Java $java (class file $major)"
+
+      - name: Publish the jar
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.jar.outputs.build }}" \
+            "${{ steps.jar.outputs.file }}" phantom-build.json \
+            --title "${{ steps.jar.outputs.build }}" \
+            --notes "Velocity ${{ steps.jar.outputs.build }}, built from \`${{ github.ref_name }}\` at \`${{ github.sha }}\`, with the phantom handshake patch.
+
+          Needs Java ${{ steps.jar.outputs.java }}."
+
+      # Rebuilt from the releases that exist rather than appended to, so deleting
+      # a bad release is enough to withdraw it.
+      - name: Rebuild the version index
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # gh lists newest first, which is the order the index keeps: sorting on
+          # the tag string would put phantom.7 above phantom.10.
+          gh release list --limit 1000 --json tagName,isDraft,isPrerelease \
+            --jq '[.[] | select(.isDraft == false and .isPrerelease == false) | .tagName]' > /tmp/tags.json
+
+          : > /tmp/entries.json
+          for tag in $(jq -r '.[]' /tmp/tags.json); do
+            [ "$tag" = "$INDEX_TAG" ] && continue
+            # phantom-build.json is what the release says about itself. A release
+            # without one is not ours to describe, so it is skipped rather than
+            # guessed at.
+            if ! gh release download "$tag" -p phantom-build.json -O /tmp/build.json --clobber 2>/dev/null; then
+              echo "skipping $tag, no phantom-build.json"
+              continue
+            fi
+            jq -c --arg u "${{ github.server_url }}/${{ github.repository }}/releases/download/$tag/$(jq -r .file /tmp/build.json)" \
+              '{build:.build, java:.java, url:$u}' /tmp/build.json >> /tmp/entries.json
+          done
+
+          jq -s . /tmp/entries.json > "$INDEX_FILE"
+          cat "$INDEX_FILE"
+
+      - name: Publish the index
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$INDEX_TAG" >/dev/null 2>&1 || \
+            gh release create "$INDEX_TAG" --title "version index" --notes \
+              "What the panel reads to list Velocity versions. Rebuilt by the release workflow; do not edit by hand."
+          gh release upload "$INDEX_TAG" "$INDEX_FILE" --clobber

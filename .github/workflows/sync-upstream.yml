@@ -1,0 +1,175 @@
+name: sync upstream
+
+# Brings each of PaperMC's release lines into this fork.
+#
+# Lines are discovered rather than listed, so dev/5.0.0 gets picked up the day it
+# appears. Nothing is published here: changes arrive as PRs that already built,
+# and failures open an issue.
+
+on:
+  schedule:
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+env:
+  UPSTREAM: https://github.com/PaperMC/Velocity.git
+  PATCH: phantom/handshake-hostname.patch
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      lines: ${{ steps.find.outputs.lines }}
+    steps:
+      # Lines are discovered so a future one is picked up on its own, but
+      # dev/N.0.0 on its own is not enough: upstream still carries dev/2.0.0 from
+      # 2021 and an abandoned dev/5.0.0 from 2023. A line counts if it has moved
+      # recently, or if we already ship it.
+      - id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cutoff=$(date -u -d '180 days ago' +%Y-%m-%dT%H:%M:%SZ)
+          ours=$(gh api "repos/${{ github.repository }}/branches" --paginate --jq '.[].name')
+          live=""
+          for line in $(gh api repos/PaperMC/Velocity/branches --paginate --jq '.[].name' \
+                        | { grep -E '^dev/[0-9]+\.0\.0$' || true; }); do
+            if echo "$ours" | grep -qxF "$line"; then
+              live="$live $line"
+              continue
+            fi
+            last=$(gh api "repos/PaperMC/Velocity/branches/$line" --jq '.commit.commit.author.date')
+            if [[ "$last" > "$cutoff" ]]; then
+              live="$live $line"
+            else
+              echo "skipping $line, last touched $last"
+            fi
+          done
+          # printf with nothing still prints a newline, which would make [""]
+          if [ -z "$live" ]; then
+            lines='[]'
+          else
+            lines=$(printf '%s\n' $live | jq -R . | jq -sc .)
+          fi
+          echo "lines=$lines" >> "$GITHUB_OUTPUT"
+          echo "tracking: $lines"
+
+  sync:
+    needs: discover
+    if: needs.discover.outputs.lines != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        line: ${{ fromJSON(needs.discover.outputs.lines) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream "$UPSTREAM" || true
+          git fetch -q upstream "${{ matrix.line }}"
+          echo "UPSTREAM_SHA=$(git rev-parse FETCH_HEAD)" >> "$GITHUB_ENV"
+          echo "UPSTREAM_SHORT=$(git rev-parse --short FETCH_HEAD)" >> "$GITHUB_ENV"
+
+      - name: Decide what to do
+        id: plan
+        run: |
+          line="${{ matrix.line }}"
+          if ! git rev-parse --verify -q "origin/$line" >/dev/null; then
+            echo "do=adopt" >> "$GITHUB_OUTPUT"
+            echo "$line is new to this fork"
+          elif git merge-base --is-ancestor "$UPSTREAM_SHA" "origin/$line"; then
+            echo "do=nothing" >> "$GITHUB_OUTPUT"
+            echo "$line already has $UPSTREAM_SHORT"
+          else
+            echo "do=merge" >> "$GITHUB_OUTPUT"
+          fi
+          echo "branch=sync/${line//\//-}-$UPSTREAM_SHORT" >> "$GITHUB_OUTPUT"
+
+      - name: Skip branches already open
+        id: open
+        if: steps.plan.outputs.do != 'nothing'
+        run: |
+          if git ls-remote --exit-code --heads origin "${{ steps.plan.outputs.branch }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Identify
+        if: steps.plan.outputs.do != 'nothing' && steps.open.outputs.exists == 'false'
+        run: |
+          git config user.name "PhantomMarket"
+          git config user.email "dev@phantom-node.com"
+
+      # Merge, not rebase-onto-upstream: the branch keeps descending from ours, so
+      # the PR is an ordinary merge and our own files come along by themselves.
+      - name: Merge upstream into the line
+        if: steps.plan.outputs.do == 'merge' && steps.open.outputs.exists == 'false'
+        run: |
+          git checkout -q -B "${{ steps.plan.outputs.branch }}" "origin/${{ matrix.line }}"
+          git merge --no-edit "$UPSTREAM_SHA"
+
+      # A new line has no base to open a PR against, so upstream is pushed as-is
+      # first and the patch arrives the normal way. .github is left out on
+      # purpose: GITHUB_TOKEN can't push workflow files, so a new major line
+      # needs them copied once by hand (or a PAT with the workflow scope).
+      - name: Adopt a new line
+        if: steps.plan.outputs.do == 'adopt' && steps.open.outputs.exists == 'false'
+        run: |
+          git push origin "$UPSTREAM_SHA:refs/heads/${{ matrix.line }}"
+          git checkout -q -B "${{ steps.plan.outputs.branch }}" "$UPSTREAM_SHA"
+          default="${{ github.event.repository.default_branch }}"
+          git checkout "origin/$default" -- "$PATCH" README.md
+          git apply -3 "$PATCH"
+          git add -A
+          git commit -qm "phantom: send the backend's own address in the handshake"
+
+      - uses: actions/setup-java@v4
+        if: steps.plan.outputs.do != 'nothing' && steps.open.outputs.exists == 'false'
+        with:
+          distribution: temurin
+          # 17 on 3.x, 25 on 4.x; install all so the toolchain finds its own
+          java-version: |
+            17
+            21
+            25
+
+      - name: Build and check
+        if: steps.plan.outputs.do != 'nothing' && steps.open.outputs.exists == 'false'
+        run: ./gradlew :velocity-proxy:checkstyleMain :velocity-proxy:shadowJar --no-daemon
+
+      - name: Open the pull request
+        if: steps.plan.outputs.do != 'nothing' && steps.open.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git push -q origin "${{ steps.plan.outputs.branch }}"
+          gh pr create \
+            --base "${{ matrix.line }}" \
+            --head "${{ steps.plan.outputs.branch }}" \
+            --title "Sync ${{ matrix.line }} with upstream $UPSTREAM_SHORT" \
+            --body "Upstream \`${{ matrix.line }}\` is at \`$UPSTREAM_SHA\`. Builds and passes checkstyle with our patch applied.
+          Merging publishes a release and refreshes the version index the panel reads." | cat
+
+      - name: Report a failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="sync ${{ matrix.line }} failed"
+          # one open issue per line, or the nightly run files it every morning.
+          # counting beats reading .[0].number, which comes back as "null".
+          open=$(gh issue list --state open --search "$title in:title" --json number --jq 'length')
+          if [ "$open" = "0" ]; then
+            gh issue create --title "$title" --body \
+              "Merging upstream \`${{ matrix.line }}\` conflicted, or the result did not build. [Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}). Usually means upstream rewrote the handshake code and the patch needs redoing by hand."
+          fi

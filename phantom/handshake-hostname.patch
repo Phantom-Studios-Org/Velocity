@@ -1,0 +1,45 @@
+diff --git a/proxy/src/main/java/com/velocitypowered/proxy/connection/backend/VelocityServerConnection.java b/proxy/src/main/java/com/velocitypowered/proxy/connection/backend/VelocityServerConnection.java
+index c8b3c199..1aae2398 100644
+--- a/proxy/src/main/java/com/velocitypowered/proxy/connection/backend/VelocityServerConnection.java
++++ b/proxy/src/main/java/com/velocitypowered/proxy/connection/backend/VelocityServerConnection.java
+@@ -142,10 +142,17 @@ public class VelocityServerConnection implements MinecraftConnectionAssociation,
+     }
+   }
+ 
++  // [phantom] the backend's own address, not the player's vhost. Our backends sit behind another
++  // hostname router, so this field is the routing key for the next hop and the player's vhost
++  // would point it back at this proxy. Same for legacy/bungeeguard, where the host ends up inside
++  // the string the backend validates.
++  private String handshakeHostname() {
++    return registeredServer.getServerInfo().getAddress().getHostString();
++  }
++
+   private String createLegacyForwardingAddress() {
+     return PlayerDataForwarding.createLegacyForwardingAddress(
+-      proxyPlayer.getVirtualHost().orElseGet(() ->
+-        registeredServer.getServerInfo().getAddress()).getHostString(),
++      handshakeHostname(),
+       getPlayerRemoteAddressAsString(),
+       proxyPlayer.getGameProfile()
+     );
+@@ -153,8 +160,7 @@ public class VelocityServerConnection implements MinecraftConnectionAssociation,
+ 
+   private String createBungeeGuardForwardingAddress(byte[] forwardingSecret) {
+     return PlayerDataForwarding.createBungeeGuardForwardingAddress(
+-      proxyPlayer.getVirtualHost().orElseGet(() ->
+-        registeredServer.getServerInfo().getAddress()).getHostString(),
++      handshakeHostname(),
+       getPlayerRemoteAddressAsString(),
+       proxyPlayer.getGameProfile(),
+       forwardingSecret
+@@ -167,9 +173,7 @@ public class VelocityServerConnection implements MinecraftConnectionAssociation,
+ 
+     // Initiate the handshake.
+     ProtocolVersion protocolVersion = proxyPlayer.getConnection().getProtocolVersion();
+-    String playerVhost = proxyPlayer.getVirtualHost()
+-                .orElseGet(() -> registeredServer.getServerInfo().getAddress())
+-                .getHostString();
++    String playerVhost = handshakeHostname();
+ 
+     HandshakePacket handshake = new HandshakePacket();
+     handshake.setIntent(HandshakeIntent.LOGIN);
