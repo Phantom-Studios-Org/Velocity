@@ -1,0 +1,37 @@
+diff --git a/proxy/src/main/java/com/velocitypowered/proxy/connection/backend/VelocityServerConnection.java b/proxy/src/main/java/com/velocitypowered/proxy/connection/backend/VelocityServerConnection.java
+index 1aae2398..10ddfeaf 100644
+--- a/proxy/src/main/java/com/velocitypowered/proxy/connection/backend/VelocityServerConnection.java
++++ b/proxy/src/main/java/com/velocitypowered/proxy/connection/backend/VelocityServerConnection.java
+@@ -150,6 +150,23 @@ public class VelocityServerConnection implements MinecraftConnectionAssociation,
+     return registeredServer.getServerInfo().getAddress().getHostString();
+   }
+ 
++  // [phantom] tells the node's router which proxy is calling, so a backend can
++  // refuse anything else. Goes after the null byte, same slot BungeeGuard and
++  // Forge use, and the router strips it before the backend sees it.
++  //
++  // Modern only: legacy and bungeeguard already own this field, and appending to
++  // their payload adds a part they don't expect. Empty unless the panel wrote a
++  // token, which it only does when every backend here is ours — it's a private
++  // protocol and has no business on someone else's box.
++  private String withPhantomToken(String host) {
++    String token = server.getConfiguration().getPhantomToken();
++    if (token.isEmpty()
++        || server.getConfiguration().getPlayerInfoForwardingMode() != PlayerInfoForwarding.MODERN) {
++      return host;
++    }
++    return host + '\0' + "phantom:" + token;
++  }
++
+   private String createLegacyForwardingAddress() {
+     return PlayerDataForwarding.createLegacyForwardingAddress(
+       handshakeHostname(),
+@@ -188,7 +205,7 @@ public class VelocityServerConnection implements MinecraftConnectionAssociation,
+     } else if (proxyPlayer.getConnection().getType() instanceof ModernForgeConnectionType forgeConnection) {
+       handshake.setServerAddress(playerVhost + forgeConnection.getModernToken());
+     } else {
+-      handshake.setServerAddress(playerVhost);
++      handshake.setServerAddress(withPhantomToken(playerVhost));
+     }
+ 
+     handshake.setPort(proxyPlayer.getVirtualHost()
