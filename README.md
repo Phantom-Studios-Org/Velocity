@@ -17,8 +17,14 @@
 > Also applied to legacy and BungeeGuard forwarding, where the host is part of the
 > string the backend validates.
 >
-> Patch: [`phantom/handshake-hostname.patch`](phantom/handshake-hostname.patch).
-> Everything else is upstream.
+> **Handshake token.** With `phantom-token` set, the proxy appends
+> `\0phantom:<token>` to the handshake host so the node's router can tell which
+> proxy is calling and refuse anything else. Modern forwarding only — legacy and
+> BungeeGuard already own that field. The panel generates the token, rewrites it
+> on every start, and leaves it empty when any backend behind the proxy is not
+> ours: it's a private protocol and has no business on someone else's box.
+>
+> Patches live in [`phantom/`](phantom/). Everything else is upstream.
 
 A Minecraft server proxy with unparalleled server support, scalability,
 and flexibility.
