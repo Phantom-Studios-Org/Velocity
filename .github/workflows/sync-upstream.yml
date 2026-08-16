@@ -5,6 +5,12 @@ name: sync upstream
 # Lines are discovered rather than listed, so dev/5.0.0 gets picked up the day it
 # appears. Nothing is published here: changes arrive as PRs that already built,
 # and failures open an issue.
+#
+# One long-lived branch and one open PR per line, updated in place rather than a
+# new PR per upstream commit. Upstream sits on the same version for months, so a
+# PR per commit would be ~50 PRs and ~50 releases a year all called
+# 4.1.0-SNAPSHOT. The PR accumulates instead, says whether the version has moved,
+# and you merge when it is worth a release.
 
 on:
   schedule:
@@ -83,29 +89,30 @@ jobs:
         id: plan
         run: |
           line="${{ matrix.line }}"
+          branch="sync/${line//\//-}"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+
           if ! git rev-parse --verify -q "origin/$line" >/dev/null; then
             echo "do=adopt" >> "$GITHUB_OUTPUT"
             echo "$line is new to this fork"
-          elif git merge-base --is-ancestor "$UPSTREAM_SHA" "origin/$line"; then
+            exit 0
+          fi
+          # Against the open sync branch when there is one: it is what already
+          # carries upstream while the PR waits to be merged, and comparing
+          # against the line instead would rebuild every night for nothing.
+          head="origin/$line"
+          if git rev-parse --verify -q "origin/$branch" >/dev/null; then
+            head="origin/$branch"
+          fi
+          if git merge-base --is-ancestor "$UPSTREAM_SHA" "$head"; then
             echo "do=nothing" >> "$GITHUB_OUTPUT"
-            echo "$line already has $UPSTREAM_SHORT"
+            echo "$head already has $UPSTREAM_SHORT"
           else
             echo "do=merge" >> "$GITHUB_OUTPUT"
           fi
-          echo "branch=sync/${line//\//-}-$UPSTREAM_SHORT" >> "$GITHUB_OUTPUT"
-
-      - name: Skip branches already open
-        id: open
-        if: steps.plan.outputs.do != 'nothing'
-        run: |
-          if git ls-remote --exit-code --heads origin "${{ steps.plan.outputs.branch }}" >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
 
       - name: Identify
-        if: steps.plan.outputs.do != 'nothing' && steps.open.outputs.exists == 'false'
+        if: steps.plan.outputs.do != 'nothing'
         run: |
           git config user.name "PhantomMarket"
           git config user.email "dev@phantom-node.com"
@@ -113,9 +120,17 @@ jobs:
       # Merge, not rebase-onto-upstream: the branch keeps descending from ours, so
       # the PR is an ordinary merge and our own files come along by themselves.
       - name: Merge upstream into the line
-        if: steps.plan.outputs.do == 'merge' && steps.open.outputs.exists == 'false'
+        if: steps.plan.outputs.do == 'merge'
         run: |
-          git checkout -q -B "${{ steps.plan.outputs.branch }}" "origin/${{ matrix.line }}"
+          branch="${{ steps.plan.outputs.branch }}"
+          # Continue the open branch when there is one, so the PR keeps its
+          # history and its comments instead of being replaced every night.
+          if git rev-parse --verify -q "origin/$branch" >/dev/null; then
+            git checkout -q -B "$branch" "origin/$branch"
+            git merge --no-edit "origin/${{ matrix.line }}"
+          else
+            git checkout -q -B "$branch" "origin/${{ matrix.line }}"
+          fi
           git merge --no-edit "$UPSTREAM_SHA"
 
       # A new line has no base to open a PR against, so upstream is pushed as-is
@@ -123,7 +138,7 @@ jobs:
       # purpose: GITHUB_TOKEN can't push workflow files, so a new major line
       # needs them copied once by hand (or a PAT with the workflow scope).
       - name: Adopt a new line
-        if: steps.plan.outputs.do == 'adopt' && steps.open.outputs.exists == 'false'
+        if: steps.plan.outputs.do == 'adopt'
         run: |
           git push origin "$UPSTREAM_SHA:refs/heads/${{ matrix.line }}"
           git checkout -q -B "${{ steps.plan.outputs.branch }}" "$UPSTREAM_SHA"
@@ -134,7 +149,7 @@ jobs:
           git commit -qm "phantom: send the backend's own address in the handshake"
 
       - uses: actions/setup-java@v4
-        if: steps.plan.outputs.do != 'nothing' && steps.open.outputs.exists == 'false'
+        if: steps.plan.outputs.do != 'nothing'
         with:
           distribution: temurin
           # 17 on 3.x, 25 on 4.x; install all so the toolchain finds its own
@@ -144,21 +159,36 @@ jobs:
             25
 
       - name: Build and check
-        if: steps.plan.outputs.do != 'nothing' && steps.open.outputs.exists == 'false'
+        if: steps.plan.outputs.do != 'nothing'
         run: ./gradlew :velocity-proxy:checkstyleMain :velocity-proxy:shadowJar --no-daemon
 
-      - name: Open the pull request
-        if: steps.plan.outputs.do != 'nothing' && steps.open.outputs.exists == 'false'
+      - name: Compare versions
+        id: version
+        if: steps.plan.outputs.do != 'nothing'
+        run: |
+          now=$(sed -n 's/^version=//p' gradle.properties)
+          was=$(git show "origin/${{ matrix.line }}:gradle.properties" 2>/dev/null | sed -n 's/^version=//p')
+          echo "now=$now" >> "$GITHUB_OUTPUT"
+          if [ -n "$was" ] && [ "$was" != "$now" ]; then
+            echo "note=Version moved from \`$was\` to \`$now\` — worth releasing." >> "$GITHUB_OUTPUT"
+          else
+            echo "note=Still \`$now\`. Upstream fixes only; merge when one of them matters." >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update the pull request
+        if: steps.plan.outputs.do != 'nothing'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          git push -q origin "${{ steps.plan.outputs.branch }}"
-          gh pr create \
-            --base "${{ matrix.line }}" \
-            --head "${{ steps.plan.outputs.branch }}" \
-            --title "Sync ${{ matrix.line }} with upstream $UPSTREAM_SHORT" \
-            --body "Upstream \`${{ matrix.line }}\` is at \`$UPSTREAM_SHA\`. Builds and passes checkstyle with our patch applied.
-          Merging publishes a release and refreshes the version index the panel reads." | cat
+          branch="${{ steps.plan.outputs.branch }}"
+          git push -q origin "$branch"
+          body="Upstream \`${{ matrix.line }}\` is at \`$UPSTREAM_SHA\`. Builds and passes checkstyle with our patch applied. ${{ steps.version.outputs.note }} Merging publishes one release and refreshes the version index the panel reads."
+          if [ "$(gh pr list --head "$branch" --state open --json number --jq 'length')" = "0" ]; then
+            gh pr create --base "${{ matrix.line }}" --head "$branch" \
+              --title "Sync ${{ matrix.line }} (${{ steps.version.outputs.now }})" --body "$body" | cat
+          else
+            gh pr edit "$branch" --title "Sync ${{ matrix.line }} (${{ steps.version.outputs.now }})" --body "$body" | cat
+          fi
 
       - name: Report a failure
         if: failure()
