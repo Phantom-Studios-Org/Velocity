@@ -22,6 +22,7 @@ import com.velocitypowered.api.network.ProtocolVersion;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.proxy.server.ServerPing;
 import com.velocitypowered.proxy.VelocityServer;
+import com.velocitypowered.proxy.config.PlayerInfoForwarding;
 import com.velocitypowered.proxy.connection.MinecraftConnection;
 import com.velocitypowered.proxy.connection.MinecraftSessionHandler;
 import com.velocitypowered.proxy.protocol.StateRegistry;
@@ -54,12 +55,30 @@ public class PingSessionHandler implements MinecraftSessionHandler {
     this.virtualHostString = virtualHostString;
   }
 
+  // [phantom] same token the login handshake carries, for the same reason: a backend told to
+  // accept only its proxy applies that to pings too, so without it the entry in the player's
+  // list goes dead while the server behind it is fine. Conditions match
+  // VelocityServerConnection#withPhantomToken — modern forwarding, token configured.
+  private String withPhantomToken(String host) {
+    if (connection.server == null) {
+      return host;
+    }
+    String token = connection.server.getConfiguration().getPhantomToken();
+    if (token.isEmpty()
+        || connection.server.getConfiguration().getPlayerInfoForwardingMode()
+            != PlayerInfoForwarding.MODERN) {
+      return host;
+    }
+    return host + '\0' + "phantom:" + token;
+  }
+
   @Override
   public void activated() {
     HandshakePacket handshake = new HandshakePacket();
     handshake.setIntent(HandshakeIntent.STATUS);
-    handshake.setServerAddress(this.virtualHostString == null || this.virtualHostString.isEmpty()
-            ? server.getServerInfo().getAddress().getHostString() : this.virtualHostString);
+    handshake.setServerAddress(withPhantomToken(
+        this.virtualHostString == null || this.virtualHostString.isEmpty()
+            ? server.getServerInfo().getAddress().getHostString() : this.virtualHostString));
     handshake.setPort(server.getServerInfo().getAddress().getPort());
     handshake.setProtocolVersion(version);
     connection.delayedWrite(handshake);
