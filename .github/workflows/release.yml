@@ -70,6 +70,9 @@ jobs:
       - name: Check the handshake end to end
         run: python3 phantom/e2e-handshake.py "${{ steps.jar.outputs.file }}"
 
+      - name: Check the token end to end
+        run: python3 phantom/e2e-token.py "${{ steps.jar.outputs.file }}"
+
       - name: Publish the jar
         env:
           GH_TOKEN: ${{ github.token }}

@@ -172,6 +172,12 @@ jobs:
         if: steps.plan.outputs.do != 'nothing'
         run: python3 phantom/e2e-handshake.py proxy/build/libs/velocity-proxy-*-all.jar
 
+      # The token is the other half and lives in different classes; the login and
+      # the ping build their handshake separately, so both are checked.
+      - name: Check the token end to end
+        if: steps.plan.outputs.do != 'nothing'
+        run: python3 phantom/e2e-token.py proxy/build/libs/velocity-proxy-*-all.jar
+
       - name: Compare versions
         id: version
         if: steps.plan.outputs.do != 'nothing'
