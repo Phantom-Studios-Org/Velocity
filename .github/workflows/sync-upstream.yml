@@ -24,7 +24,9 @@ permissions:
 
 env:
   UPSTREAM: https://github.com/PaperMC/Velocity.git
-  PATCH: phantom/handshake-hostname.patch
+  # both of them, in order. A line adopted with only the first one builds and
+  # passes the e2e, and then quietly refuses every locked backend.
+  PATCHES: phantom/handshake-hostname.patch phantom/handshake-token.patch
 
 jobs:
   discover:
@@ -143,10 +145,12 @@ jobs:
           git push origin "$UPSTREAM_SHA:refs/heads/${{ matrix.line }}"
           git checkout -q -B "${{ steps.plan.outputs.branch }}" "$UPSTREAM_SHA"
           default="${{ github.event.repository.default_branch }}"
-          git checkout "origin/$default" -- "$PATCH" README.md
-          git apply -3 "$PATCH"
+          git checkout "origin/$default" -- $PATCHES README.md
+          for patch in $PATCHES; do
+            git apply -3 "$patch"
+          done
           git add -A
-          git commit -qm "phantom: send the backend's own address in the handshake"
+          git commit -qm "phantom: handshake hostname and token"
 
       - uses: actions/setup-java@v4
         if: steps.plan.outputs.do != 'nothing'

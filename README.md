@@ -24,6 +24,10 @@
 > on every start, and leaves it empty when any backend behind the proxy is not
 > ours: it's a private protocol and has no business on someone else's box.
 >
+> Pings carry it as well as logins. A backend that refuses anything but its proxy
+> refuses status requests too, so without it the entry in the player's list goes
+> dead while the server behind it is perfectly fine.
+>
 > Patches live in [`phantom/`](phantom/). Everything else is upstream.
 
 A Minecraft server proxy with unparalleled server support, scalability,
