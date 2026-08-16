@@ -149,6 +149,25 @@ public class VelocityServerConnection implements MinecraftConnectionAssociation,
     return registeredServer.getServerInfo().getAddress().getHostString();
   }
 
+  // [phantom] identifies this proxy to the node's router, so a backend can be
+  // told to accept nothing else. Goes after the null byte, the slot BungeeGuard
+  // and Forge already use, and the router strips it before the backend sees it.
+  //
+  // Modern forwarding only: legacy and bungeeguard put their own payload in this
+  // field, and a second one appended to it is a field they do not expect.
+  //
+  // The token is written by the panel and only when every backend behind this
+  // proxy is ours. This is a private protocol, and sending it to somebody else's
+  // server would be leaking it to a machine we do not run.
+  private String withPhantomToken(String host) {
+    String token = server.getConfiguration().getPhantomToken();
+    if (token.isEmpty()
+        || server.getConfiguration().getPlayerInfoForwardingMode() != PlayerInfoForwarding.MODERN) {
+      return host;
+    }
+    return host + '\0' + "phantom:" + token;
+  }
+
   private String createLegacyForwardingAddress() {
     return PlayerDataForwarding.createLegacyForwardingAddress(
       handshakeHostname(),
@@ -187,7 +206,7 @@ public class VelocityServerConnection implements MinecraftConnectionAssociation,
     } else if (proxyPlayer.getConnection().getType() instanceof ModernForgeConnectionType forgeConnection) {
       handshake.setServerAddress(playerVhost + forgeConnection.getModernToken());
     } else {
-      handshake.setServerAddress(playerVhost);
+      handshake.setServerAddress(withPhantomToken(playerVhost));
     }
 
     handshake.setPort(proxyPlayer.getVirtualHost()

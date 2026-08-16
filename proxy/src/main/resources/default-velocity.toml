@@ -2,6 +2,12 @@
 config-version = "2.8"
 
 # What port should the proxy be bound to? By default, we'll bind to all addresses on port 25565.
+# [phantom] identifies this proxy to the node's router, so a backend can be told
+# to accept nothing else. Written by the panel, and only when every backend
+# behind this proxy is ours: it is a private protocol and does not belong on
+# somebody else's machine. Modern forwarding only. Empty disables it.
+phantom-token = ""
+
 bind = "0.0.0.0:25565"
 
 # What should be the MOTD? This gets displayed when the player adds your server to

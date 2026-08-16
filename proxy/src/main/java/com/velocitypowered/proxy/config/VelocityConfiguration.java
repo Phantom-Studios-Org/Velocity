@@ -87,6 +87,8 @@ public class VelocityConfiguration implements ProxyConfig {
   @Expose
   private final Advanced advanced;
   @Expose
+  private String phantomToken = "";
+  @Expose
   private final Query query;
   private final Metrics metrics;
   @Expose
@@ -455,6 +457,11 @@ public class VelocityConfiguration implements ProxyConfig {
     return packetLimiterConfig;
   }
 
+  // [phantom] shared with the node's router; empty disables it entirely.
+  public String getPhantomToken() {
+    return this.phantomToken == null ? "" : this.phantomToken;
+  }
+
   @Override
   public String toString() {
     return MoreObjects.toStringHelper(this)
@@ -580,7 +587,7 @@ public class VelocityConfiguration implements ProxyConfig {
         throw new RuntimeException("The forwarding-secret file must not be empty.");
       }
 
-      return new VelocityConfiguration(
+      VelocityConfiguration configuration = new VelocityConfiguration(
               bind,
               motd,
               maxPlayers,
@@ -601,6 +608,10 @@ public class VelocityConfiguration implements ProxyConfig {
               forceKeyAuthentication,
               packetLimiterConfig
       );
+      // [phantom] set after construction rather than threaded through a
+      // constructor upstream owns and reorders.
+      configuration.phantomToken = config.getOrElse("phantom-token", "");
+      return configuration;
     }
   }
 
