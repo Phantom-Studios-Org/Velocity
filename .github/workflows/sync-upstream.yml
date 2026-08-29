@@ -87,6 +87,8 @@ jobs:
 
       - name: Decide what to do
         id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           line="${{ matrix.line }}"
           branch="sync/${line//\//-}"
@@ -104,11 +106,22 @@ jobs:
           if git rev-parse --verify -q "origin/$branch" >/dev/null; then
             head="origin/$branch"
           fi
-          if git merge-base --is-ancestor "$UPSTREAM_SHA" "$head"; then
+          if ! git merge-base --is-ancestor "$UPSTREAM_SHA" "$head"; then
+            echo "do=merge" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Upstream is in, but the PR carrying it may not be. A run that pushed
+          # the branch and then died before opening the PR would be "already has
+          # it" every night after, and the merge would sit on the branch with
+          # nothing pointing at it, under a green tick.
+          if [ "$head" != "origin/$line" ] \
+             && ! git merge-base --is-ancestor "origin/$branch" "origin/$line" \
+             && [ "$(gh pr list --head "$branch" --state open --json number --jq 'length')" = "0" ]; then
+            echo "do=pr" >> "$GITHUB_OUTPUT"
+            echo "$branch carries $UPSTREAM_SHORT but has no open PR"
+          else
             echo "do=nothing" >> "$GITHUB_OUTPUT"
             echo "$head already has $UPSTREAM_SHORT"
-          else
-            echo "do=merge" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Identify
@@ -147,6 +160,14 @@ jobs:
           git apply -3 "$PATCH"
           git add -A
           git commit -qm "phantom: send the backend's own address in the handshake"
+
+      # Nothing to merge, so the tree only has to come down to be rebuilt and
+      # have its PR opened.
+      - name: Pick up the unopened sync branch
+        if: steps.plan.outputs.do == 'pr'
+        run: |
+          branch="${{ steps.plan.outputs.branch }}"
+          git checkout -q -B "$branch" "origin/$branch"
 
       - uses: actions/setup-java@v4
         if: steps.plan.outputs.do != 'nothing'
@@ -187,19 +208,24 @@ jobs:
             echo "note=Still \`$now\`. Upstream fixes only; merge when one of them matters." >> "$GITHUB_OUTPUT"
           fi
 
+      # Through env, not ${{ }}: the note is markdown and contains backticks, and
+      # pasted into the script those are command substitution, not text.
       - name: Open or update the pull request
         if: steps.plan.outputs.do != 'nothing'
         env:
           GH_TOKEN: ${{ github.token }}
+          LINE: ${{ matrix.line }}
+          BRANCH: ${{ steps.plan.outputs.branch }}
+          VERSION: ${{ steps.version.outputs.now }}
+          NOTE: ${{ steps.version.outputs.note }}
         run: |
-          branch="${{ steps.plan.outputs.branch }}"
-          git push -q origin "$branch"
-          body="Upstream \`${{ matrix.line }}\` is at \`$UPSTREAM_SHA\`. Builds and passes checkstyle with our patch applied. ${{ steps.version.outputs.note }} Merging publishes one release and refreshes the version index the panel reads."
-          if [ "$(gh pr list --head "$branch" --state open --json number --jq 'length')" = "0" ]; then
-            gh pr create --base "${{ matrix.line }}" --head "$branch" \
-              --title "Sync ${{ matrix.line }} (${{ steps.version.outputs.now }})" --body "$body" | cat
+          git push -q origin "$BRANCH"
+          body="Upstream \`$LINE\` is at \`$UPSTREAM_SHA\`. Builds and passes checkstyle with our patch applied. $NOTE Merging publishes one release and refreshes the version index the panel reads."
+          if [ "$(gh pr list --head "$BRANCH" --state open --json number --jq 'length')" = "0" ]; then
+            gh pr create --base "$LINE" --head "$BRANCH" \
+              --title "Sync $LINE ($VERSION)" --body "$body" | cat
           else
-            gh pr edit "$branch" --title "Sync ${{ matrix.line }} (${{ steps.version.outputs.now }})" --body "$body" | cat
+            gh pr edit "$BRANCH" --title "Sync $LINE ($VERSION)" --body "$body" | cat
           fi
 
       - name: Report a failure
