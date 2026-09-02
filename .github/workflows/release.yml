@@ -9,6 +9,11 @@ on:
   push:
     branches:
       - 'dev/*.0.0'
+    # A workflow or a readme is not a release. GitHub reads this from the commit
+    # being pushed, so a commit that only touches these excludes itself.
+    paths-ignore:
+      - '.github/**'
+      - '**.md'
   workflow_dispatch:
 
 # Two lines can land at once; the index is a single shared asset, so the runs
