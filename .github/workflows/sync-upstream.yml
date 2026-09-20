@@ -76,9 +76,15 @@ jobs:
       matrix:
         line: ${{ fromJSON(needs.discover.outputs.lines) }}
     steps:
+      # SYNC_TOKEN, not the job's own GITHUB_TOKEN: a GitHub App token is
+      # refused any push that touches .github/workflows, and upstream owns
+      # gradle.yml, so the night upstream edits it the push dies. Falls back to
+      # the built-in token, which works right up until that happens. A PAT also
+      # makes the PR trigger CI, which a GITHUB_TOKEN one never does.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          token: ${{ secrets.SYNC_TOKEN || github.token }}
 
       - name: Fetch upstream
         run: |
@@ -150,8 +156,8 @@ jobs:
 
       # A new line has no base to open a PR against, so upstream is pushed as-is
       # first and the patch arrives the normal way. .github is left out on
-      # purpose: GITHUB_TOKEN can't push workflow files, so a new major line
-      # needs them copied once by hand (or a PAT with the workflow scope).
+      # purpose: with SYNC_TOKEN unset the push can't carry workflow files, so a
+      # new major line needs them copied once by hand.
       - name: Adopt a new line
         if: steps.plan.outputs.do == 'adopt'
         run: |
@@ -217,7 +223,7 @@ jobs:
       - name: Open or update the pull request
         if: steps.plan.outputs.do != 'nothing'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.SYNC_TOKEN || github.token }}
           LINE: ${{ matrix.line }}
           BRANCH: ${{ steps.plan.outputs.branch }}
           VERSION: ${{ steps.version.outputs.now }}
