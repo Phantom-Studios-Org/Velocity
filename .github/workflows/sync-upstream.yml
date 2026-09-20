@@ -27,6 +27,11 @@ env:
   # both of them, in order. A line adopted with only the first one builds and
   # passes the e2e, and then quietly refuses every locked backend.
   PATCHES: phantom/handshake-hostname.patch phantom/handshake-token.patch
+  # Every gh command below is bare, and "Fetch upstream" adds a remote literally
+  # called upstream. gh picks its base repo from the remotes and prefers that
+  # name over origin, so without this the pr list, the pr create and the issue
+  # are all aimed at PaperMC, where our token can do nothing.
+  GH_REPO: ${{ github.repository }}
 
 jobs:
   discover:
@@ -233,9 +238,9 @@ jobs:
           body="Upstream \`$LINE\` is at \`$UPSTREAM_SHA\`. Builds and passes checkstyle with our patch applied. $NOTE Merging publishes one release and refreshes the version index the panel reads."
           if [ "$(gh pr list --head "$BRANCH" --state open --json number --jq 'length')" = "0" ]; then
             gh pr create --base "$LINE" --head "$BRANCH" \
-              --title "Sync $LINE ($VERSION)" --body "$body" | cat
+              --title "Sync $LINE ($VERSION)" --body "$body"
           else
-            gh pr edit "$BRANCH" --title "Sync $LINE ($VERSION)" --body "$body" | cat
+            gh pr edit "$BRANCH" --title "Sync $LINE ($VERSION)" --body "$body"
           fi
 
       - name: Report a failure
