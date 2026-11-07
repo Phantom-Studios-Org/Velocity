@@ -1,0 +1,20 @@
+diff --git a/proxy/src/main/java/com/velocitypowered/proxy/server/PingSessionHandler.java b/proxy/src/main/java/com/velocitypowered/proxy/server/PingSessionHandler.java
+index 78236012..30e5f977 100644
+--- a/proxy/src/main/java/com/velocitypowered/proxy/server/PingSessionHandler.java
++++ b/proxy/src/main/java/com/velocitypowered/proxy/server/PingSessionHandler.java
+@@ -76,9 +76,12 @@ public class PingSessionHandler implements MinecraftSessionHandler {
+   public void activated() {
+     HandshakePacket handshake = new HandshakePacket();
+     handshake.setIntent(HandshakeIntent.STATUS);
+-    handshake.setServerAddress(withPhantomToken(
+-        this.virtualHostString == null || this.virtualHostString.isEmpty()
+-            ? server.getServerInfo().getAddress().getHostString() : this.virtualHostString));
++    // [phantom] the backend's own address, never virtualHostString, same as
++    // VelocityServerConnection#handshakeHostname. Upstream sends the player's vhost here (ping
++    // passthrough passes it), but our backends sit behind a hostname router: the player's vhost
++    // is this proxy's name, so the ping was routed back into the proxy and timed out instead of
++    // reaching the backend.
++    handshake.setServerAddress(withPhantomToken(server.getServerInfo().getAddress().getHostString()));
+     handshake.setPort(server.getServerInfo().getAddress().getPort());
+     handshake.setProtocolVersion(version);
+     connection.delayedWrite(handshake);

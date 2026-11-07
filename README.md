@@ -28,6 +28,12 @@
 > refuses status requests too, so without it the entry in the player's list goes
 > dead while the server behind it is perfectly fine.
 >
+> **Ping hostname.** Pings get the backend's own address too. Upstream sends the
+> player's vhost on them since PaperMC/Velocity#1265, so with ping passthrough on
+> every backend ping reached our router named after the proxy itself, was routed
+> back into it and timed out: the list entry answered late, from the proxy alone,
+> with a "Connection reset by peer" per backend in its log.
+>
 > Patches live in [`phantom/`](phantom/). Everything else is upstream.
 
 A Minecraft server proxy with unparalleled server support, scalability,

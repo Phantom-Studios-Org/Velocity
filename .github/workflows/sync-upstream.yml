@@ -24,9 +24,11 @@ permissions:
 
 env:
   UPSTREAM: https://github.com/PaperMC/Velocity.git
-  # both of them, in order. A line adopted with only the first one builds and
-  # passes the e2e, and then quietly refuses every locked backend.
-  PATCHES: phantom/handshake-hostname.patch phantom/handshake-token.patch
+  # All of them, in order. A line adopted with only the first one builds and
+  # passes the e2e, and then quietly refuses every locked backend. Without the
+  # third, ping passthrough sends the player's vhost and every backend ping
+  # loops back into the proxy.
+  PATCHES: phantom/handshake-hostname.patch phantom/handshake-token.patch phantom/ping-hostname.patch
   # Every gh command below is bare, and "Fetch upstream" adds a remote literally
   # called upstream. gh picks its base repo from the remotes and prefers that
   # name over origin, so without this the pr list, the pr create and the issue
