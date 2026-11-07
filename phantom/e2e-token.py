@@ -6,6 +6,11 @@ only one of them used to carry the token. A backend told to accept nothing but
 its proxy applies that to status requests as well, so the version without this
 kept players out of nothing and left every entry in the server list dead.
 
+Both also have to name the backend by its own address, not by the vhost the
+player typed: on our nodes that field is what the next router routes by, and the
+ping path kept upstream's vhost after the login path stopped sending it. So the
+test player types a name of its own, and the backend must never see it.
+
 Compiling proves neither. This logs in and pings for real.
 
 Usage: e2e-token.py <velocity jar>
@@ -26,6 +31,9 @@ BACKEND_PORT = 25598
 BACKEND_HOST = "127.0.0.1"
 TOKEN = "e2e-token-value"
 MARKER = "phantom:" + TOKEN
+# What the test player connects as. Anything but BACKEND_HOST: were they the
+# same, a proxy forwarding the player's vhost would look correct.
+PLAYER_VHOST = "player-typed-this.example.com"
 BOOT_TIMEOUT = 120
 
 
@@ -150,7 +158,7 @@ def ping():
     """A status request, which is what makes the proxy ping the backend."""
     with socket.create_connection(("127.0.0.1", PROXY_PORT), 10) as sock:
         sock.settimeout(15)
-        host = "127.0.0.1"
+        host = PLAYER_VHOST
         handshake = varint(0x00) + varint(0) + varint(len(host)) + host.encode()
         handshake += struct.pack(">H", PROXY_PORT) + varint(1)
         sock.send(frame(handshake))
@@ -164,7 +172,7 @@ def ping():
 def log_in(protocol):
     with socket.create_connection(("127.0.0.1", PROXY_PORT), 10) as sock:
         sock.settimeout(15)
-        host = "127.0.0.1"
+        host = PLAYER_VHOST
         handshake = varint(0x00) + varint(protocol)
         handshake += varint(len(host)) + host.encode()
         handshake += struct.pack(">H", PROXY_PORT) + varint(2)
@@ -197,7 +205,8 @@ def check(backend, path):
     # The hostname patch has to survive alongside it: the first field is still
     # the backend's own address, not whatever the player typed.
     if parts[0] != BACKEND_HOST:
-        die(f"the {path} handshake lost the backend address: {parts[0]!r}")
+        die(f"the {path} handshake did not name the backend by its own address: {parts[0]!r}"
+            + (" (the player's vhost)" if parts[0] == PLAYER_VHOST else ""))
     print(f"{path:<6} -> {parts[0]} + {MARKER}")
 
 
