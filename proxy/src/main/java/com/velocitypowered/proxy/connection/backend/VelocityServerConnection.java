@@ -202,9 +202,12 @@ public class VelocityServerConnection implements MinecraftConnectionAssociation,
       byte[] secret = server.getConfiguration().getForwardingSecret();
       handshake.setServerAddress(createBungeeGuardForwardingAddress(secret));
     } else if (proxyPlayer.getConnection().getType() == ConnectionTypes.LEGACY_FORGE) {
-      handshake.setServerAddress(playerVhost + HANDSHAKE_HOSTNAME_TOKEN);
+      // [phantom] Forge clients carry the token too, after their own marker, or a backend that
+      // demands it refuses every Forge player. The router takes it out and hands the backend the
+      // marker exactly as Forge wrote it ("\0FML\0\0phantom:t" becomes "\0FML\0").
+      handshake.setServerAddress(withPhantomToken(playerVhost + HANDSHAKE_HOSTNAME_TOKEN));
     } else if (proxyPlayer.getConnection().getType() instanceof ModernForgeConnectionType forgeConnection) {
-      handshake.setServerAddress(playerVhost + forgeConnection.getModernToken());
+      handshake.setServerAddress(withPhantomToken(playerVhost + forgeConnection.getModernToken()));
     } else {
       handshake.setServerAddress(withPhantomToken(playerVhost));
     }

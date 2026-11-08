@@ -30,6 +30,13 @@
 > back into it and timed out: the list entry answered late, from the proxy alone,
 > with a "Connection reset by peer" per backend in its log.
 >
+> **Forge token.** Forge clients carry the token too. Their handshake took its own
+> branch, which sent Forge's marker (`\0FORGE`) and skipped the token, so a
+> backend that accepts nothing but its proxy refused every Forge player. The token
+> now goes after the marker, and the router hands the backend the marker exactly
+> as Forge wrote it. Legacy Forge (≤1.12) gets the same treatment, though modern
+> forwarding turns those clients away before a backend is ever dialled.
+>
 > Patches live in [`phantom/`](phantom/). Everything else is upstream.
 
 A Minecraft server proxy with unparalleled server support, scalability,
