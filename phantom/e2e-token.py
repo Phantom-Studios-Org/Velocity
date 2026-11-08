@@ -11,7 +11,11 @@ player typed: on our nodes that field is what the next router routes by, and the
 ping path kept upstream's vhost after the login path stopped sending it. So the
 test player types a name of its own, and the backend must never see it.
 
-Compiling proves neither. This logs in and pings for real.
+A Forge client (1.20.2+) takes a third branch, which used to send Forge's marker
+and drop the token. It has to carry both, the marker first, so that taking the
+token out leaves the backend exactly what Forge sent.
+
+Compiling proves none of it. This logs in and pings for real.
 
 Usage: e2e-token.py <velocity jar>
 """
@@ -34,6 +38,8 @@ MARKER = "phantom:" + TOKEN
 # What the test player connects as. Anything but BACKEND_HOST: were they the
 # same, a proxy forwarding the player's vhost would look correct.
 PLAYER_VHOST = "player-typed-this.example.com"
+# What a 1.20.2+ Forge client appends to the host it connects to.
+FORGE_MARKER = "FORGE"
 BOOT_TIMEOUT = 120
 
 
@@ -100,7 +106,13 @@ class FakeBackend(threading.Thread):
                 host = read_string(f)
                 f.read(2)  # port
                 intent = read_varint(f)
-                self.seen["status" if intent == 1 else "login"] = host
+                if intent == 1:
+                    path = "status"
+                elif "\0" + FORGE_MARKER in host:
+                    path = "forge"
+                else:
+                    path = "login"
+                self.seen[path] = host
         except Exception as exc:  # noqa: BLE001 - reported by the assertions
             self.error = exc
 
@@ -169,16 +181,14 @@ def ping():
             return json.loads(read_string(f))["version"]["protocol"]
 
 
-def log_in(protocol):
+def log_in(protocol, host=PLAYER_VHOST, name=b"E2EToken"):
     with socket.create_connection(("127.0.0.1", PROXY_PORT), 10) as sock:
         sock.settimeout(15)
-        host = PLAYER_VHOST
         handshake = varint(0x00) + varint(protocol)
         handshake += varint(len(host)) + host.encode()
         handshake += struct.pack(">H", PROXY_PORT) + varint(2)
         sock.send(frame(handshake))
 
-        name = b"E2EToken"
         sock.send(frame(varint(0x00) + varint(len(name)) + name + b"\x00" * 16))
 
         with sock.makefile("rb") as f:
@@ -210,6 +220,24 @@ def check(backend, path):
     print(f"{path:<6} -> {parts[0]} + {MARKER}")
 
 
+def without_token(host):
+    """What the node's router hands the backend: every token part dropped, each
+    with the null byte before it, the rest kept byte for byte (withoutProxyToken
+    in the agent's router)."""
+    return "\0".join(p for p in host.split("\0") if not p.startswith("phantom:"))
+
+
+def check_forge(backend):
+    check(backend, "forge")
+    host = backend.seen["forge"]
+    # Forge reads its marker as the first part after the host: the token must
+    # come after it, and taking the token out must leave what Forge sent.
+    if host.split("\0")[1] != FORGE_MARKER:
+        die(f"the forge handshake does not carry Forge's marker first: {host!r}")
+    if without_token(host) != BACKEND_HOST + "\0" + FORGE_MARKER:
+        die(f"taking the token out does not leave Forge's handshake: {without_token(host)!r}")
+
+
 def main():
     if len(sys.argv) != 2:
         raise SystemExit(f"usage: {sys.argv[0]} <velocity jar>")
@@ -230,6 +258,9 @@ def main():
             wait_until_listening(proxy, log_path)
             protocol = ping()
             log_in(protocol)
+            # The proxy's own version is past 1.20.2, where the marker makes it a
+            # modern Forge connection.
+            log_in(protocol, PLAYER_VHOST + "\0" + FORGE_MARKER, b"E2EForge")
             # The ping is answered from a cache on the way in, so give the
             # backend connection behind it a moment to land.
             time.sleep(2)
@@ -244,7 +275,8 @@ def main():
         die(f"the fake backend failed: {backend.error}")
     check(backend, "login")
     check(backend, "status")
-    print("both paths carry the token")
+    check_forge(backend)
+    print("every path carries the token")
 
 
 if __name__ == "__main__":
